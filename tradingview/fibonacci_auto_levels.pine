@@ -1,0 +1,234 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ElliottWaveBot
+
+//@version=5
+indicator("Auto Fibonacci Levels (Elliott Wave)", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ==================== DESCRIPTION ====================
+// Automatically draws Fibonacci retracement and extension levels
+// based on detected swing highs and lows. Useful for Elliott Wave
+// analysis to identify potential wave targets and retracement levels.
+
+// ==================== INPUTS ====================
+// Detection Settings
+pivotLength = input.int(10, "Pivot Detection Length", minval=3, maxval=30, group="Detection")
+autoUpdate = input.bool(true, "Auto Update Levels", group="Detection")
+
+// Fibonacci Levels
+showRetracement = input.bool(true, "Show Retracement Levels", group="Fibonacci Levels")
+showExtension = input.bool(true, "Show Extension Levels", group="Fibonacci Levels")
+
+// Retracement levels to show
+show236 = input.bool(true, "23.6%", inline="ret1", group="Retracement Levels")
+show382 = input.bool(true, "38.2%", inline="ret1", group="Retracement Levels")
+show500 = input.bool(true, "50.0%", inline="ret2", group="Retracement Levels")
+show618 = input.bool(true, "61.8%", inline="ret2", group="Retracement Levels")
+show786 = input.bool(true, "78.6%", inline="ret3", group="Retracement Levels")
+
+// Extension levels to show
+showExt1000 = input.bool(true, "100%", inline="ext1", group="Extension Levels")
+showExt1272 = input.bool(true, "127.2%", inline="ext1", group="Extension Levels")
+showExt1618 = input.bool(true, "161.8%", inline="ext2", group="Extension Levels")
+showExt2000 = input.bool(true, "200%", inline="ext2", group="Extension Levels")
+showExt2618 = input.bool(true, "261.8%", inline="ext3", group="Extension Levels")
+
+// Display Settings
+extendLines = input.string("Right", "Extend Lines", options=["None", "Right", "Both"], group="Display")
+showPrices = input.bool(true, "Show Price Labels", group="Display")
+showPercentages = input.bool(true, "Show Percentages", group="Display")
+lineWidth = input.int(1, "Line Width", minval=1, maxval=4, group="Display")
+
+// Colors
+color0 = input.color(color.gray, "0% / 100%", group="Colors")
+color236 = input.color(color.red, "23.6%", group="Colors")
+color382 = input.color(color.orange, "38.2%", group="Colors")
+color500 = input.color(color.yellow, "50.0%", group="Colors")
+color618 = input.color(color.green, "61.8%", group="Colors")
+color786 = input.color(color.blue, "78.6%", group="Colors")
+colorExt = input.color(color.purple, "Extensions", group="Colors")
+
+// ==================== PIVOT DETECTION ====================
+pivotHigh = ta.pivothigh(high, pivotLength, pivotLength)
+pivotLow = ta.pivotlow(low, pivotLength, pivotLength)
+
+var float swingHigh = na
+var float swingLow = na
+var int swingHighBar = na
+var int swingLowBar = na
+var bool isUptrend = true
+
+// Track swings
+if not na(pivotHigh)
+    swingHigh := pivotHigh
+    swingHighBar := bar_index - pivotLength
+
+if not na(pivotLow)
+    swingLow := pivotLow
+    swingLowBar := bar_index - pivotLength
+
+// Determine trend direction based on most recent swing
+if not na(swingHighBar) and not na(swingLowBar)
+    isUptrend := swingLowBar > swingHighBar ? true : false
+
+// ==================== FIBONACCI CALCULATIONS ====================
+fibRange = math.abs(swingHigh - swingLow)
+
+// Retracement levels (from high to low for uptrend, low to high for downtrend)
+fib0 = isUptrend ? swingLow : swingHigh
+fib236 = isUptrend ? swingHigh - fibRange * 0.236 : swingLow + fibRange * 0.236
+fib382 = isUptrend ? swingHigh - fibRange * 0.382 : swingLow + fibRange * 0.382
+fib500 = isUptrend ? swingHigh - fibRange * 0.5 : swingLow + fibRange * 0.5
+fib618 = isUptrend ? swingHigh - fibRange * 0.618 : swingLow + fibRange * 0.618
+fib786 = isUptrend ? swingHigh - fibRange * 0.786 : swingLow + fibRange * 0.786
+fib1000 = isUptrend ? swingHigh : swingLow
+
+// Extension levels (beyond 100%)
+ext1272 = isUptrend ? swingLow - fibRange * 0.272 : swingHigh + fibRange * 0.272
+ext1618 = isUptrend ? swingLow - fibRange * 0.618 : swingHigh + fibRange * 0.618
+ext2000 = isUptrend ? swingLow - fibRange * 1.0 : swingHigh + fibRange * 1.0
+ext2618 = isUptrend ? swingLow - fibRange * 1.618 : swingHigh + fibRange * 1.618
+
+// ==================== DRAWING ====================
+var line[] fibLines = array.new_line(0)
+var label[] fibLabels = array.new_label(0)
+
+// Extension type for lines
+getExtend() =>
+    extendLines == "Right" ? extend.right : extendLines == "Both" ? extend.both : extend.none
+
+// Clear old drawings
+clearAll() =>
+    for i = 0 to array.size(fibLines) - 1
+        line.delete(array.get(fibLines, i))
+    array.clear(fibLines)
+    for i = 0 to array.size(fibLabels) - 1
+        label.delete(array.get(fibLabels, i))
+    array.clear(fibLabels)
+
+// Draw a Fibonacci level
+drawLevel(price, pct, col, isExt) =>
+    if not na(price) and not na(swingHighBar) and not na(swingLowBar)
+        startBar = math.min(swingHighBar, swingLowBar)
+        endBar = bar_index
+
+        // Draw line
+        l = line.new(startBar, price, endBar, price, xloc=xloc.bar_index, extend=getExtend(), color=col, width=lineWidth)
+        array.push(fibLines, l)
+
+        // Draw label
+        if showPrices or showPercentages
+            labelText = ""
+            if showPercentages
+                labelText := str.tostring(pct * 100, "#.#") + "%"
+            if showPrices
+                labelText := labelText + (showPercentages ? " - " : "") + str.tostring(price, "#.##")
+
+            lbl = label.new(endBar + 5, price, labelText, xloc=xloc.bar_index, style=label.style_label_left, color=color.new(col, 80), textcolor=col, size=size.tiny)
+            array.push(fibLabels, lbl)
+
+// Draw all levels
+drawAllLevels() =>
+    clearAll()
+
+    if showRetracement
+        // Base levels
+        drawLevel(fib0, 0.0, color0, false)
+        drawLevel(fib1000, 1.0, color0, false)
+
+        // Retracement levels
+        if show236
+            drawLevel(fib236, 0.236, color236, false)
+        if show382
+            drawLevel(fib382, 0.382, color382, false)
+        if show500
+            drawLevel(fib500, 0.5, color500, false)
+        if show618
+            drawLevel(fib618, 0.618, color618, false)
+        if show786
+            drawLevel(fib786, 0.786, color786, false)
+
+    if showExtension
+        if showExt1000
+            extPrice = isUptrend ? swingLow - fibRange : swingHigh + fibRange
+            drawLevel(extPrice, 1.0, colorExt, true)
+        if showExt1272
+            drawLevel(ext1272, 1.272, colorExt, true)
+        if showExt1618
+            drawLevel(ext1618, 1.618, colorExt, true)
+        if showExt2000
+            drawLevel(ext2000, 2.0, colorExt, true)
+        if showExt2618
+            drawLevel(ext2618, 2.618, colorExt, true)
+
+// Update drawings
+if barstate.isconfirmed and autoUpdate
+    drawAllLevels()
+
+// ==================== WAVE-SPECIFIC TARGETS ====================
+// Calculate specific Elliott Wave targets based on Fibonacci
+
+// Wave 2 targets (retracement of Wave 1)
+wave2Target382 = fib382
+wave2Target500 = fib500
+wave2Target618 = fib618
+
+// Wave 3 targets (extension from Wave 2 end)
+// Typically 161.8%, 200%, or 261.8% of Wave 1
+
+// Wave 4 targets (retracement of Wave 3)
+// Typically 38.2% or 50% of Wave 3
+
+// Wave 5 targets (from Wave 4 end)
+// Equal to Wave 1, or 61.8% of Waves 1-3
+
+// ==================== PRICE PROXIMITY ALERTS ====================
+// Check if price is near key levels
+proximityThreshold = fibRange * 0.01  // 1% of range
+
+nearFib236 = math.abs(close - fib236) < proximityThreshold
+nearFib382 = math.abs(close - fib382) < proximityThreshold
+nearFib500 = math.abs(close - fib500) < proximityThreshold
+nearFib618 = math.abs(close - fib618) < proximityThreshold
+nearFib786 = math.abs(close - fib786) < proximityThreshold
+
+nearAnyLevel = nearFib236 or nearFib382 or nearFib500 or nearFib618 or nearFib786
+
+// Plot markers when price reaches key levels
+plotshape(nearFib382, "Near 38.2%", shape.diamond, location.belowbar, color382, size=size.tiny)
+plotshape(nearFib500, "Near 50%", shape.diamond, location.belowbar, color500, size=size.tiny)
+plotshape(nearFib618, "Near 61.8%", shape.diamond, location.belowbar, color618, size=size.tiny)
+
+// ==================== INFO TABLE ====================
+var table infoTable = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Fibonacci Levels", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "", text_color=color.white)
+
+    table.cell(infoTable, 0, 1, "Swing High:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, str.tostring(swingHigh, "#.##"), text_color=color.white, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 2, "Swing Low:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, str.tostring(swingLow, "#.##"), text_color=color.white, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 3, "Range:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, str.tostring(fibRange, "#.##"), text_color=color.white, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 4, "Trend:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, isUptrend ? "UP" : "DOWN", text_color=isUptrend ? color.green : color.red, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 5, "38.2%:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(fib382, "#.##"), text_color=color382, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 6, "50.0%:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 6, str.tostring(fib500, "#.##"), text_color=color500, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 7, "61.8%:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 7, str.tostring(fib618, "#.##"), text_color=color618, text_size=size.tiny)
+
+// ==================== ALERTS ====================
+alertcondition(nearFib382, title="Price at 38.2%", message="Price reached 38.2% Fibonacci level")
+alertcondition(nearFib500, title="Price at 50%", message="Price reached 50% Fibonacci level")
+alertcondition(nearFib618, title="Price at 61.8%", message="Price reached 61.8% Fibonacci level (Golden Ratio)")
+alertcondition(nearFib786, title="Price at 78.6%", message="Price reached 78.6% Fibonacci level")
+alertcondition(nearAnyLevel, title="Price at Any Fib Level", message="Price reached a key Fibonacci level")

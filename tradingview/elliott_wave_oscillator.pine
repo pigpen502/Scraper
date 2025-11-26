@@ -1,0 +1,171 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ElliottWaveBot
+
+//@version=5
+indicator("Elliott Wave Oscillator (EWO)", overlay=false)
+
+// ==================== DESCRIPTION ====================
+// The Elliott Wave Oscillator (EWO) is the difference between a 5-period and 35-period
+// simple moving average. It helps identify:
+// - Wave 3: Usually shows the highest/lowest oscillator reading
+// - Divergences: Price makes new high/low but oscillator doesn't (Wave 5 ending)
+// - Wave corrections: Oscillator returning to zero line
+
+// ==================== INPUTS ====================
+fastLength = input.int(5, "Fast MA Length", minval=2, maxval=20, group="Oscillator Settings")
+slowLength = input.int(35, "Slow MA Length", minval=20, maxval=100, group="Oscillator Settings")
+signalLength = input.int(5, "Signal Line Length", minval=2, maxval=20, group="Oscillator Settings")
+
+showHistogram = input.bool(true, "Show Histogram", group="Display")
+showSignalLine = input.bool(true, "Show Signal Line", group="Display")
+showDivergences = input.bool(true, "Show Divergences", group="Display")
+showZeroLine = input.bool(true, "Show Zero Line", group="Display")
+
+divergenceLookback = input.int(30, "Divergence Lookback", minval=10, maxval=100, group="Divergence Detection")
+pivotLookback = input.int(5, "Pivot Lookback", minval=2, maxval=15, group="Divergence Detection")
+
+bullColor = input.color(color.green, "Bullish Color", group="Colors")
+bearColor = input.color(color.red, "Bearish Color", group="Colors")
+signalColor = input.color(color.orange, "Signal Line Color", group="Colors")
+divergenceColor = input.color(color.yellow, "Divergence Color", group="Colors")
+
+// ==================== CALCULATIONS ====================
+// Elliott Wave Oscillator
+fastMA = ta.sma(close, fastLength)
+slowMA = ta.sma(close, slowLength)
+ewo = fastMA - slowMA
+
+// Signal line
+signalLine = ta.sma(ewo, signalLength)
+
+// Histogram
+histogram = ewo - signalLine
+
+// Rate of change for momentum
+ewoROC = ta.change(ewo, 1)
+
+// Normalized EWO for comparison
+ewoNorm = ewo / ta.stdev(ewo, slowLength)
+
+// ==================== DIVERGENCE DETECTION ====================
+// Find oscillator pivots
+oscPivotHigh = ta.pivothigh(ewo, pivotLookback, pivotLookback)
+oscPivotLow = ta.pivotlow(ewo, pivotLookback, pivotLookback)
+
+// Find price pivots
+pricePivotHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+pricePivotLow = ta.pivotlow(low, pivotLookback, pivotLookback)
+
+// Store pivot values for comparison
+var float lastOscHigh = na
+var float lastPriceHigh = na
+var int lastOscHighBar = na
+var int lastPriceHighBar = na
+
+var float lastOscLow = na
+var float lastPriceLow = na
+var int lastOscLowBar = na
+var int lastPriceLowBar = na
+
+// Update highs
+if not na(oscPivotHigh)
+    lastOscHigh := oscPivotHigh
+    lastOscHighBar := bar_index - pivotLookback
+
+if not na(pricePivotHigh)
+    lastPriceHigh := pricePivotHigh
+    lastPriceHighBar := bar_index - pivotLookback
+
+// Update lows
+if not na(oscPivotLow)
+    lastOscLow := oscPivotLow
+    lastOscLowBar := bar_index - pivotLookback
+
+if not na(pricePivotLow)
+    lastPriceLow := pricePivotLow
+    lastPriceLowBar := bar_index - pivotLookback
+
+// Detect bearish divergence (price higher high, oscillator lower high)
+bearishDivergence = false
+if not na(oscPivotHigh) and not na(pricePivotHigh)
+    if bar_index - lastPriceHighBar < divergenceLookback and bar_index - lastOscHighBar < divergenceLookback
+        if high[pivotLookback] > lastPriceHigh and oscPivotHigh < lastOscHigh
+            bearishDivergence := true
+
+// Detect bullish divergence (price lower low, oscillator higher low)
+bullishDivergence = false
+if not na(oscPivotLow) and not na(pricePivotLow)
+    if bar_index - lastPriceLowBar < divergenceLookback and bar_index - lastOscLowBar < divergenceLookback
+        if low[pivotLookback] < lastPriceLow and oscPivotLow > lastOscLow
+            bullishDivergence := true
+
+// ==================== WAVE IDENTIFICATION ====================
+// Wave 3 typically has the strongest momentum
+isStrongWave3 = math.abs(ewo) > ta.highest(math.abs(ewo), 50) * 0.8
+
+// Zero line cross indicates wave transition
+zeroCrossUp = ta.crossover(ewo, 0)
+zeroCrossDown = ta.crossunder(ewo, 0)
+
+// Signal line cross for confirmation
+signalCrossUp = ta.crossover(ewo, signalLine)
+signalCrossDown = ta.crossunder(ewo, signalLine)
+
+// ==================== PLOTTING ====================
+// Zero line
+hline(0, "Zero Line", color=showZeroLine ? color.gray : color.new(color.gray, 100), linestyle=hline.style_dashed)
+
+// Histogram
+histColor = histogram >= 0 ? (histogram > histogram[1] ? bullColor : color.new(bullColor, 50)) :
+                             (histogram < histogram[1] ? bearColor : color.new(bearColor, 50))
+plot(showHistogram ? histogram : na, "Histogram", color=histColor, style=plot.style_histogram, linewidth=2)
+
+// EWO line
+ewoColor = ewo >= 0 ? bullColor : bearColor
+plot(ewo, "EWO", color=ewoColor, linewidth=2)
+
+// Signal line
+plot(showSignalLine ? signalLine : na, "Signal", color=signalColor, linewidth=1)
+
+// Divergence markers
+plotshape(showDivergences and bullishDivergence, "Bullish Divergence", shape.triangleup, location.bottom, divergenceColor, size=size.small)
+plotshape(showDivergences and bearishDivergence, "Bearish Divergence", shape.triangledown, location.top, divergenceColor, size=size.small)
+
+// Wave 3 indicator
+bgcolor(isStrongWave3 ? color.new(ewo > 0 ? bullColor : bearColor, 90) : na, title="Wave 3 Zone")
+
+// Zero crosses
+plotshape(zeroCrossUp, "Zero Cross Up", shape.circle, location.bottom, bullColor, size=size.tiny)
+plotshape(zeroCrossDown, "Zero Cross Down", shape.circle, location.top, bearColor, size=size.tiny)
+
+// ==================== INFO TABLE ====================
+var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Elliott Wave Oscillator", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "", text_color=color.white)
+
+    table.cell(infoTable, 0, 1, "EWO:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, str.tostring(ewo, "#.##"), text_color=ewo >= 0 ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 2, "Signal:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, str.tostring(signalLine, "#.##"), text_color=signalColor, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 3, "Histogram:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, str.tostring(histogram, "#.##"), text_color=histogram >= 0 ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 4, "Momentum:", text_color=color.gray, text_size=size.tiny)
+    momText = ewoROC > 0 ? "Rising" : ewoROC < 0 ? "Falling" : "Flat"
+    momColor = ewoROC > 0 ? bullColor : ewoROC < 0 ? bearColor : color.gray
+    table.cell(infoTable, 1, 4, momText, text_color=momColor, text_size=size.tiny)
+
+    table.cell(infoTable, 0, 5, "Wave 3:", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, isStrongWave3 ? "LIKELY" : "No", text_color=isStrongWave3 ? bullColor : color.gray, text_size=size.tiny)
+
+// ==================== ALERTS ====================
+alertcondition(zeroCrossUp, title="EWO Zero Cross Up", message="EWO crossed above zero - potential new upward wave starting")
+alertcondition(zeroCrossDown, title="EWO Zero Cross Down", message="EWO crossed below zero - potential new downward wave starting")
+alertcondition(bullishDivergence, title="Bullish Divergence", message="EWO Bullish Divergence detected - Wave 5 may be ending")
+alertcondition(bearishDivergence, title="Bearish Divergence", message="EWO Bearish Divergence detected - Wave 5 may be ending")
+alertcondition(signalCrossUp, title="Signal Cross Up", message="EWO crossed above signal line - bullish momentum")
+alertcondition(signalCrossDown, title="Signal Cross Down", message="EWO crossed below signal line - bearish momentum")

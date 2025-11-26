@@ -1,0 +1,399 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ElliottWaveBot
+
+//@version=5
+strategy("Elliott Wave Trading Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// ==================== INPUTS ====================
+// Wave Detection Settings
+pivotLength = input.int(5, "Pivot Detection Length", minval=2, maxval=20, group="Wave Detection")
+minWaveBars = input.int(5, "Minimum Wave Bars", minval=2, maxval=50, group="Wave Detection")
+fibTolerance = input.float(15.0, "Fibonacci Tolerance %", minval=5.0, maxval=30.0, group="Wave Detection")
+
+// Strategy Settings
+riskPerTrade = input.float(2.0, "Risk Per Trade %", minval=0.5, maxval=10.0, group="Strategy")
+minRiskReward = input.float(2.0, "Minimum Risk/Reward", minval=1.0, maxval=5.0, group="Strategy")
+useTrailingStop = input.bool(true, "Use Trailing Stop", group="Strategy")
+trailingStopPct = input.float(3.0, "Trailing Stop %", minval=1.0, maxval=10.0, group="Strategy")
+
+// Take Profit Settings
+tp1Pct = input.float(50, "TP1 Close % of Position", minval=10, maxval=100, group="Take Profit")
+tp1RR = input.float(1.0, "TP1 Risk Multiple", minval=0.5, maxval=3.0, group="Take Profit")
+tp2RR = input.float(2.0, "TP2 Risk Multiple", minval=1.0, maxval=5.0, group="Take Profit")
+tp3RR = input.float(3.0, "TP3 Risk Multiple", minval=1.5, maxval=10.0, group="Take Profit")
+
+// Filter Settings
+useRSIFilter = input.bool(true, "Use RSI Filter", group="Filters")
+rsiPeriod = input.int(14, "RSI Period", minval=5, maxval=50, group="Filters")
+rsiOverbought = input.int(70, "RSI Overbought", minval=60, maxval=90, group="Filters")
+rsiOversold = input.int(30, "RSI Oversold", minval=10, maxval=40, group="Filters")
+
+useMACDFilter = input.bool(true, "Use MACD Filter", group="Filters")
+macdFast = input.int(12, "MACD Fast", group="Filters")
+macdSlow = input.int(26, "MACD Slow", group="Filters")
+macdSignal = input.int(9, "MACD Signal", group="Filters")
+
+useEMAFilter = input.bool(true, "Use EMA Filter", group="Filters")
+emaLength = input.int(50, "EMA Length", group="Filters")
+
+// Time Filter
+useTimeFilter = input.bool(false, "Use Time Filter", group="Time Filter")
+startHour = input.int(9, "Start Hour", minval=0, maxval=23, group="Time Filter")
+endHour = input.int(16, "End Hour", minval=0, maxval=23, group="Time Filter")
+
+// Display
+showLabels = input.bool(true, "Show Entry Labels", group="Display")
+showStopLoss = input.bool(true, "Show Stop Loss Line", group="Display")
+showTakeProfit = input.bool(true, "Show Take Profit Lines", group="Display")
+
+// Colors
+bullColor = input.color(color.green, "Bull Color", group="Colors")
+bearColor = input.color(color.red, "Bear Color", group="Colors")
+
+// ==================== INDICATORS ====================
+// RSI
+rsi = ta.rsi(close, rsiPeriod)
+
+// MACD
+[macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// EMA
+ema = ta.ema(close, emaLength)
+
+// ATR for dynamic stops
+atr = ta.atr(14)
+
+// ==================== PIVOT DETECTION ====================
+pivotHigh = ta.pivothigh(high, pivotLength, pivotLength)
+pivotLow = ta.pivotlow(low, pivotLength, pivotLength)
+
+// Store pivots
+var float[] pivotPrices = array.new_float(0)
+var int[] pivotBars = array.new_int(0)
+var bool[] pivotTypes = array.new_bool(0)
+
+// Track pivots with alternation
+if not na(pivotHigh)
+    if array.size(pivotTypes) == 0 or not array.get(pivotTypes, array.size(pivotTypes) - 1)
+        array.push(pivotPrices, pivotHigh)
+        array.push(pivotBars, bar_index - pivotLength)
+        array.push(pivotTypes, true)
+    else if pivotHigh > array.get(pivotPrices, array.size(pivotPrices) - 1)
+        array.set(pivotPrices, array.size(pivotPrices) - 1, pivotHigh)
+        array.set(pivotBars, array.size(pivotBars) - 1, bar_index - pivotLength)
+
+if not na(pivotLow)
+    if array.size(pivotTypes) == 0 or array.get(pivotTypes, array.size(pivotTypes) - 1)
+        array.push(pivotPrices, pivotLow)
+        array.push(pivotBars, bar_index - pivotLength)
+        array.push(pivotTypes, false)
+    else if pivotLow < array.get(pivotPrices, array.size(pivotPrices) - 1)
+        array.set(pivotPrices, array.size(pivotPrices) - 1, pivotLow)
+        array.set(pivotBars, array.size(pivotBars) - 1, bar_index - pivotLength)
+
+// Limit array size
+if array.size(pivotPrices) > 20
+    array.shift(pivotPrices)
+    array.shift(pivotBars)
+    array.shift(pivotTypes)
+
+// ==================== WAVE PATTERN DETECTION ====================
+var int currentWave = 0
+var bool isBullishWave = true
+var float waveConfidence = 0.0
+
+// Wave price levels
+var float w0Price = na
+var float w1Price = na
+var float w2Price = na
+var float w3Price = na
+var float w4Price = na
+var float w5Price = na
+
+// Wave bars
+var int w0Bar = na
+var int w1Bar = na
+var int w2Bar = na
+var int w3Bar = na
+var int w4Bar = na
+var int w5Bar = na
+
+// Detect impulse wave pattern
+detectWave() =>
+    detected = false
+    bullish = true
+    wave = 0
+    conf = 0.0
+
+    if array.size(pivotPrices) >= 6
+        p0 = array.get(pivotPrices, array.size(pivotPrices) - 6)
+        p1 = array.get(pivotPrices, array.size(pivotPrices) - 5)
+        p2 = array.get(pivotPrices, array.size(pivotPrices) - 4)
+        p3 = array.get(pivotPrices, array.size(pivotPrices) - 3)
+        p4 = array.get(pivotPrices, array.size(pivotPrices) - 2)
+        p5 = array.get(pivotPrices, array.size(pivotPrices) - 1)
+
+        t0 = array.get(pivotTypes, array.size(pivotTypes) - 6)
+        bullish := not t0
+
+        // Wave lengths
+        w1Len = math.abs(p1 - p0)
+        w2Len = math.abs(p2 - p1)
+        w3Len = math.abs(p3 - p2)
+        w4Len = math.abs(p4 - p3)
+        w5Len = math.abs(p5 - p4)
+
+        // Rule validations
+        rule1 = bullish ? p2 > p0 : p2 < p0  // Wave 2 doesn't retrace 100%
+        rule2 = w3Len >= w1Len or w3Len >= w5Len  // Wave 3 not shortest
+        rule3 = bullish ? p4 > p1 : p4 < p1  // Wave 4 no overlap with Wave 1
+
+        if rule1 and rule2 and rule3
+            detected := true
+            wave := 5
+            conf := 0.6
+
+            // Fibonacci score
+            w2Ret = w2Len / w1Len
+            w3Ext = w3Len / w1Len
+            w4Ret = w4Len / w3Len
+
+            if w2Ret > 0.382 and w2Ret < 0.786
+                conf += 0.1
+            if w3Ext > 1.5
+                conf += 0.15
+            if w4Ret > 0.236 and w4Ret < 0.618
+                conf += 0.1
+
+    [detected, bullish, wave, conf]
+
+// Also detect Wave 2 and Wave 4 positions (entry points)
+detectEntryWaves() =>
+    entryWave = 0
+    bullish = true
+    conf = 0.0
+
+    if array.size(pivotPrices) >= 4
+        // Check for Wave 2 completion (3 pivots: 0, 1, 2)
+        p0 = array.get(pivotPrices, array.size(pivotPrices) - 3)
+        p1 = array.get(pivotPrices, array.size(pivotPrices) - 2)
+        p2 = array.get(pivotPrices, array.size(pivotPrices) - 1)
+
+        t0 = array.get(pivotTypes, array.size(pivotTypes) - 3)
+        bullish := not t0
+
+        w1Len = math.abs(p1 - p0)
+        w2Len = math.abs(p2 - p1)
+        w2Ret = w2Len / w1Len
+
+        // Valid Wave 2: retracement between 38.2% and 78.6%
+        validW2 = bullish ? p2 > p0 : p2 < p0
+        fibValid = w2Ret > 0.382 and w2Ret < 0.886
+
+        if validW2 and fibValid
+            entryWave := 2
+            conf := 0.5 + (fibValid ? 0.2 : 0)
+
+    if array.size(pivotPrices) >= 6 and entryWave == 0
+        // Check for Wave 4 completion
+        p0 = array.get(pivotPrices, array.size(pivotPrices) - 5)
+        p1 = array.get(pivotPrices, array.size(pivotPrices) - 4)
+        p2 = array.get(pivotPrices, array.size(pivotPrices) - 3)
+        p3 = array.get(pivotPrices, array.size(pivotPrices) - 2)
+        p4 = array.get(pivotPrices, array.size(pivotPrices) - 1)
+
+        t0 = array.get(pivotTypes, array.size(pivotTypes) - 5)
+        bullish := not t0
+
+        w1Len = math.abs(p1 - p0)
+        w3Len = math.abs(p3 - p2)
+        w4Len = math.abs(p4 - p3)
+        w4Ret = w4Len / w3Len
+
+        // Valid Wave 4
+        validW4 = bullish ? p4 > p1 : p4 < p1
+        fibValid = w4Ret > 0.236 and w4Ret < 0.618
+
+        if validW4 and fibValid
+            entryWave := 4
+            conf := 0.5 + (fibValid ? 0.2 : 0)
+
+    [entryWave, bullish, conf]
+
+// Run detections
+[fullPattern, fullBullish, fullWave, fullConf] = detectWave()
+[entryWave, entryBullish, entryConf] = detectEntryWaves()
+
+// Update state
+if fullPattern
+    currentWave := fullWave
+    isBullishWave := fullBullish
+    waveConfidence := fullConf
+
+    w0Price := array.get(pivotPrices, array.size(pivotPrices) - 6)
+    w1Price := array.get(pivotPrices, array.size(pivotPrices) - 5)
+    w2Price := array.get(pivotPrices, array.size(pivotPrices) - 4)
+    w3Price := array.get(pivotPrices, array.size(pivotPrices) - 3)
+    w4Price := array.get(pivotPrices, array.size(pivotPrices) - 2)
+    w5Price := array.get(pivotPrices, array.size(pivotPrices) - 1)
+else if entryWave > 0
+    currentWave := entryWave
+    isBullishWave := entryBullish
+    waveConfidence := entryConf
+
+// ==================== FILTER CONDITIONS ====================
+// RSI Filter
+rsiLongOk = not useRSIFilter or (rsi > rsiOversold and rsi < 60)
+rsiShortOk = not useRSIFilter or (rsi < rsiOverbought and rsi > 40)
+
+// MACD Filter
+macdLongOk = not useMACDFilter or macdLine > signalLine
+macdShortOk = not useMACDFilter or macdLine < signalLine
+
+// EMA Filter
+emaLongOk = not useEMAFilter or close > ema
+emaShortOk = not useEMAFilter or close < ema
+
+// Time Filter
+currentHour = hour(time)
+timeOk = not useTimeFilter or (currentHour >= startHour and currentHour < endHour)
+
+// Combined filters
+longFiltersOk = rsiLongOk and macdLongOk and emaLongOk and timeOk
+shortFiltersOk = rsiShortOk and macdShortOk and emaShortOk and timeOk
+
+// ==================== ENTRY SIGNALS ====================
+// Long entry: Wave 2 or Wave 4 complete in bullish trend
+longEntry = (currentWave == 2 or currentWave == 4) and isBullishWave and waveConfidence > 0.5 and longFiltersOk
+
+// Short entry: Wave 2 or Wave 4 complete in bearish trend
+shortEntry = (currentWave == 2 or currentWave == 4) and not isBullishWave and waveConfidence > 0.5 and shortFiltersOk
+
+// Exit signals: Wave 5 complete
+longExit = currentWave == 5 and isBullishWave
+shortExit = currentWave == 5 and not isBullishWave
+
+// ==================== CALCULATE STOP LOSS & TAKE PROFIT ====================
+var float entryPrice = na
+var float stopLoss = na
+var float takeProfit1 = na
+var float takeProfit2 = na
+var float takeProfit3 = na
+
+calcLevels(isLong) =>
+    entry = close
+    atrVal = atr * 2
+
+    // Stop loss at Wave 2/4 end (invalidation level)
+    sl = isLong ? (currentWave == 2 ? w2Price - atrVal : (currentWave == 4 ? w4Price - atrVal : entry - atrVal)) :
+                  (currentWave == 2 ? w2Price + atrVal : (currentWave == 4 ? w4Price + atrVal : entry + atrVal))
+
+    risk = math.abs(entry - sl)
+
+    tp1 = isLong ? entry + risk * tp1RR : entry - risk * tp1RR
+    tp2 = isLong ? entry + risk * tp2RR : entry - risk * tp2RR
+    tp3 = isLong ? entry + risk * tp3RR : entry - risk * tp3RR
+
+    [entry, sl, tp1, tp2, tp3]
+
+// ==================== STRATEGY EXECUTION ====================
+// Long entry
+if longEntry and strategy.position_size == 0
+    [e, sl, tp1, tp2, tp3] = calcLevels(true)
+    entryPrice := e
+    stopLoss := sl
+    takeProfit1 := tp1
+    takeProfit2 := tp2
+    takeProfit3 := tp3
+
+    riskReward = math.abs(tp1 - e) / math.abs(e - sl)
+
+    if riskReward >= minRiskReward
+        strategy.entry("Long", strategy.long)
+        strategy.exit("TP1", "Long", qty_percent=tp1Pct, limit=tp1, stop=sl)
+
+        if showLabels
+            label.new(bar_index, low, "LONG\nW" + str.tostring(currentWave) + " Entry\nConf: " + str.tostring(waveConfidence * 100, "#") + "%",
+                     style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.small)
+
+// Short entry
+if shortEntry and strategy.position_size == 0
+    [e, sl, tp1, tp2, tp3] = calcLevels(false)
+    entryPrice := e
+    stopLoss := sl
+    takeProfit1 := tp1
+    takeProfit2 := tp2
+    takeProfit3 := tp3
+
+    riskReward = math.abs(tp1 - e) / math.abs(e - sl)
+
+    if riskReward >= minRiskReward
+        strategy.entry("Short", strategy.short)
+        strategy.exit("TP1", "Short", qty_percent=tp1Pct, limit=tp1, stop=sl)
+
+        if showLabels
+            label.new(bar_index, high, "SHORT\nW" + str.tostring(currentWave) + " Entry\nConf: " + str.tostring(waveConfidence * 100, "#") + "%",
+                     style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.small)
+
+// Exit on Wave 5 completion
+if longExit and strategy.position_size > 0
+    strategy.close("Long", comment="W5 Complete")
+if shortExit and strategy.position_size < 0
+    strategy.close("Short", comment="W5 Complete")
+
+// Trailing stop
+if useTrailingStop and strategy.position_size != 0
+    trailOffset = close * (trailingStopPct / 100)
+    if strategy.position_size > 0
+        strategy.exit("Trail", "Long", trail_offset=trailOffset, trail_points=trailOffset)
+    else
+        strategy.exit("Trail", "Short", trail_offset=trailOffset, trail_points=trailOffset)
+
+// ==================== VISUALIZATION ====================
+// Plot stop loss and take profit lines
+plot(strategy.position_size != 0 and showStopLoss ? stopLoss : na, "Stop Loss", color=bearColor, style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size != 0 and showTakeProfit ? takeProfit1 : na, "TP1", color=bullColor, style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size != 0 and showTakeProfit ? takeProfit2 : na, "TP2", color=bullColor, style=plot.style_linebr, linewidth=1)
+plot(strategy.position_size != 0 and showTakeProfit ? takeProfit3 : na, "TP3", color=bullColor, style=plot.style_linebr, linewidth=1)
+
+// Plot EMA
+plot(useEMAFilter ? ema : na, "EMA", color=color.yellow, linewidth=1)
+
+// Background color for wave position
+bgcolor(currentWave == 2 or currentWave == 4 ? color.new(isBullishWave ? bullColor : bearColor, 95) : na)
+
+// ==================== INFO TABLE ====================
+var table statsTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(statsTable, 0, 0, "Elliott Wave Strategy", text_color=color.white, text_size=size.small)
+    table.cell(statsTable, 1, 0, "", text_color=color.white)
+
+    table.cell(statsTable, 0, 1, "Wave:", text_color=color.gray, text_size=size.tiny)
+    table.cell(statsTable, 1, 1, str.tostring(currentWave), text_color=color.white, text_size=size.tiny)
+
+    table.cell(statsTable, 0, 2, "Trend:", text_color=color.gray, text_size=size.tiny)
+    table.cell(statsTable, 1, 2, isBullishWave ? "BULL" : "BEAR", text_color=isBullishWave ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(statsTable, 0, 3, "Confidence:", text_color=color.gray, text_size=size.tiny)
+    table.cell(statsTable, 1, 3, str.tostring(waveConfidence * 100, "#") + "%", text_color=color.white, text_size=size.tiny)
+
+    table.cell(statsTable, 0, 4, "Position:", text_color=color.gray, text_size=size.tiny)
+    posText = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+    posColor = strategy.position_size > 0 ? bullColor : strategy.position_size < 0 ? bearColor : color.gray
+    table.cell(statsTable, 1, 4, posText, text_color=posColor, text_size=size.tiny)
+
+    table.cell(statsTable, 0, 5, "RSI:", text_color=color.gray, text_size=size.tiny)
+    table.cell(statsTable, 1, 5, str.tostring(rsi, "#.#"), text_color=rsi > rsiOverbought ? bearColor : rsi < rsiOversold ? bullColor : color.white, text_size=size.tiny)
+
+    table.cell(statsTable, 0, 6, "MACD:", text_color=color.gray, text_size=size.tiny)
+    table.cell(statsTable, 1, 6, macdLine > signalLine ? "BULL" : "BEAR", text_color=macdLine > signalLine ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(statsTable, 0, 7, "Net Profit:", text_color=color.gray, text_size=size.tiny)
+    table.cell(statsTable, 1, 7, str.tostring(strategy.netprofit, "#.##"), text_color=strategy.netprofit >= 0 ? bullColor : bearColor, text_size=size.tiny)
+
+// ==================== ALERTS ====================
+alertcondition(longEntry, title="Long Entry Signal", message="Elliott Wave Long Entry: Wave {{currentWave}} complete")
+alertcondition(shortEntry, title="Short Entry Signal", message="Elliott Wave Short Entry: Wave {{currentWave}} complete")
+alertcondition(longExit, title="Long Exit Signal", message="Elliott Wave Long Exit: Wave 5 complete")
+alertcondition(shortExit, title="Short Exit Signal", message="Elliott Wave Short Exit: Wave 5 complete")

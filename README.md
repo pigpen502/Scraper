@@ -1,6 +1,16 @@
 # Elliott Wave Trading Bot
 
-An automated trading bot that uses Elliott Wave Theory to identify trading opportunities in financial markets.
+An automated trading bot that uses Elliott Wave Theory to identify trading opportunities in financial markets. Available as both a **Python bot** and **TradingView Pine Script** indicators.
+
+## Two Versions Available
+
+### 1. Python Bot (`src/`)
+Full-featured automated trading bot with backtesting, paper trading, and live trading support.
+
+### 2. TradingView Scripts (`tradingview/`)
+Pine Script indicators and strategies for TradingView charts with visual wave detection and alerts.
+
+---
 
 ## Features
 
@@ -170,6 +180,51 @@ The bot generates signals based on wave position:
 - **Stop Loss**: Set at wave invalidation level
 - **Take Profit**: Multiple targets based on Fibonacci extensions
 - **Trailing Stop**: Activated after price moves in favor
+
+---
+
+## TradingView Version
+
+The `tradingview/` folder contains Pine Script indicators for TradingView:
+
+### Included Scripts
+
+| Script | Description |
+|--------|-------------|
+| `elliott_wave_indicator.pine` | Main wave detection with visual labels |
+| `elliott_wave_strategy.pine` | Backtestable trading strategy |
+| `elliott_wave_oscillator.pine` | Wave momentum oscillator (5/35 EMA) |
+| `fibonacci_auto_levels.pine` | Auto Fibonacci retracement/extension |
+| `elliott_wave_alerts.pine` | Comprehensive alert system |
+
+### TradingView Installation
+
+1. Open TradingView and go to **Pine Editor**
+2. Copy contents of any `.pine` file
+3. Paste into Pine Editor
+4. Click **"Add to Chart"**
+
+### Recommended Setup
+
+Add these indicators to your chart:
+
+1. **Elliott Wave Auto-Detection** (overlay)
+2. **Auto Fibonacci Levels** (overlay)
+3. **Elliott Wave Oscillator** (separate pane)
+
+Or use the **Elliott Wave Strategy** for automated backtesting.
+
+### Setting Up Alerts
+
+1. Add indicator to chart
+2. Right-click → "Add Alert"
+3. Select Elliott Wave indicator
+4. Choose alert condition (Buy/Sell/Divergence)
+5. Configure notifications
+
+See `tradingview/README.md` for detailed documentation.
+
+---
 
 ## Disclaimer
 

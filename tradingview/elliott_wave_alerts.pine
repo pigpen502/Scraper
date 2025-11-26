@@ -1,0 +1,301 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ElliottWaveBot
+
+//@version=5
+indicator("Elliott Wave Alert System", overlay=true)
+
+// ==================== DESCRIPTION ====================
+// Comprehensive alert system for Elliott Wave trading.
+// Combines wave detection, technical indicators, and price levels
+// to generate trading alerts with confidence scores.
+
+// ==================== INPUTS ====================
+// Wave Detection
+pivotLength = input.int(5, "Pivot Length", minval=2, maxval=20, group="Wave Detection")
+
+// Technical Filters
+rsiPeriod = input.int(14, "RSI Period", group="Technical Filters")
+rsiOB = input.int(70, "RSI Overbought", group="Technical Filters")
+rsiOS = input.int(30, "RSI Oversold", group="Technical Filters")
+macdFast = input.int(12, "MACD Fast", group="Technical Filters")
+macdSlow = input.int(26, "MACD Slow", group="Technical Filters")
+macdSignal = input.int(9, "MACD Signal", group="Technical Filters")
+emaFast = input.int(21, "Fast EMA", group="Technical Filters")
+emaSlow = input.int(50, "Slow EMA", group="Technical Filters")
+ema200 = input.int(200, "Long EMA", group="Technical Filters")
+
+// Alert Settings
+minConfidence = input.float(60, "Minimum Confidence %", minval=0, maxval=100, group="Alerts")
+enableBuyAlerts = input.bool(true, "Enable Buy Alerts", group="Alerts")
+enableSellAlerts = input.bool(true, "Enable Sell Alerts", group="Alerts")
+enableDivergenceAlerts = input.bool(true, "Enable Divergence Alerts", group="Alerts")
+
+// Display
+showSignals = input.bool(true, "Show Signal Markers", group="Display")
+showConfidence = input.bool(true, "Show Confidence Labels", group="Display")
+showEMAs = input.bool(true, "Show EMAs", group="Display")
+
+// Colors
+bullColor = input.color(color.green, "Bullish", group="Colors")
+bearColor = input.color(color.red, "Bearish", group="Colors")
+neutralColor = input.color(color.gray, "Neutral", group="Colors")
+
+// ==================== INDICATOR CALCULATIONS ====================
+// RSI
+rsi = ta.rsi(close, rsiPeriod)
+
+// MACD
+[macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// EMAs
+emaFastLine = ta.ema(close, emaFast)
+emaSlowLine = ta.ema(close, emaSlow)
+ema200Line = ta.ema(close, ema200)
+
+// Elliott Wave Oscillator
+ewo = ta.sma(close, 5) - ta.sma(close, 35)
+
+// ATR for volatility
+atr = ta.atr(14)
+
+// ==================== PIVOT DETECTION ====================
+pivotHigh = ta.pivothigh(high, pivotLength, pivotLength)
+pivotLow = ta.pivotlow(low, pivotLength, pivotLength)
+
+var float[] pivotPrices = array.new_float(0)
+var int[] pivotBars = array.new_int(0)
+var bool[] pivotTypes = array.new_bool(0)
+
+if not na(pivotHigh)
+    if array.size(pivotTypes) == 0 or not array.get(pivotTypes, array.size(pivotTypes) - 1)
+        array.push(pivotPrices, pivotHigh)
+        array.push(pivotBars, bar_index - pivotLength)
+        array.push(pivotTypes, true)
+    else if pivotHigh > array.get(pivotPrices, array.size(pivotPrices) - 1)
+        array.set(pivotPrices, array.size(pivotPrices) - 1, pivotHigh)
+        array.set(pivotBars, array.size(pivotBars) - 1, bar_index - pivotLength)
+
+if not na(pivotLow)
+    if array.size(pivotTypes) == 0 or array.get(pivotTypes, array.size(pivotTypes) - 1)
+        array.push(pivotPrices, pivotLow)
+        array.push(pivotBars, bar_index - pivotLength)
+        array.push(pivotTypes, false)
+    else if pivotLow < array.get(pivotPrices, array.size(pivotPrices) - 1)
+        array.set(pivotPrices, array.size(pivotPrices) - 1, pivotLow)
+        array.set(pivotBars, array.size(pivotBars) - 1, bar_index - pivotLength)
+
+if array.size(pivotPrices) > 20
+    array.shift(pivotPrices)
+    array.shift(pivotBars)
+    array.shift(pivotTypes)
+
+// ==================== WAVE DETECTION ====================
+var int waveNumber = 0
+var bool isBullish = true
+var float waveConfidence = 0.0
+
+detectWavePattern() =>
+    detected = false
+    bullish = true
+    wave = 0
+    conf = 0.0
+
+    if array.size(pivotPrices) >= 4
+        p0 = array.get(pivotPrices, array.size(pivotPrices) - 3)
+        p1 = array.get(pivotPrices, array.size(pivotPrices) - 2)
+        p2 = array.get(pivotPrices, array.size(pivotPrices) - 1)
+        t0 = array.get(pivotTypes, array.size(pivotTypes) - 3)
+
+        bullish := not t0
+        w1Len = math.abs(p1 - p0)
+        w2Len = math.abs(p2 - p1)
+        w2Ret = w2Len / w1Len
+
+        // Valid Wave 2
+        valid = bullish ? p2 > p0 : p2 < p0
+        fibOk = w2Ret > 0.382 and w2Ret < 0.886
+
+        if valid and fibOk
+            detected := true
+            wave := 2
+            conf := 50.0
+            if w2Ret > 0.5 and w2Ret < 0.618
+                conf += 15.0
+
+    [detected, bullish, wave, conf]
+
+[hasPattern, patternBull, patternWave, patternConf] = detectWavePattern()
+
+if hasPattern
+    waveNumber := patternWave
+    isBullish := patternBull
+    waveConfidence := patternConf
+
+// ==================== CONFLUENCE SCORING ====================
+// Calculate confidence based on multiple factors
+calcConfidence() =>
+    conf = waveConfidence
+
+    // RSI confluence
+    if isBullish
+        if rsi < 50 and rsi > rsiOS
+            conf += 10  // RSI supportive
+        if rsi < rsiOS
+            conf += 5   // Oversold
+    else
+        if rsi > 50 and rsi < rsiOB
+            conf += 10
+        if rsi > rsiOB
+            conf += 5
+
+    // MACD confluence
+    macdBull = macdLine > signalLine
+    if (isBullish and macdBull) or (not isBullish and not macdBull)
+        conf += 10
+
+    // EMA confluence
+    if isBullish
+        if close > emaFastLine and emaFastLine > emaSlowLine
+            conf += 10
+        if close > ema200Line
+            conf += 5
+    else
+        if close < emaFastLine and emaFastLine < emaSlowLine
+            conf += 10
+        if close < ema200Line
+            conf += 5
+
+    // EWO confluence
+    ewoBull = ewo > 0
+    if (isBullish and ewoBull) or (not isBullish and not ewoBull)
+        conf += 5
+
+    math.min(conf, 100)
+
+totalConfidence = calcConfidence()
+
+// ==================== DIVERGENCE DETECTION ====================
+// RSI Divergence
+lookback = 30
+var float lastRsiHigh = na
+var float lastPriceHigh = na
+var float lastRsiLow = na
+var float lastPriceLow = na
+
+rsiPivotHigh = ta.pivothigh(rsi, 5, 5)
+rsiPivotLow = ta.pivotlow(rsi, 5, 5)
+
+if not na(rsiPivotHigh)
+    lastRsiHigh := rsiPivotHigh
+    lastPriceHigh := high[5]
+
+if not na(rsiPivotLow)
+    lastRsiLow := rsiPivotLow
+    lastPriceLow := low[5]
+
+// Bearish divergence: Higher price high, lower RSI high
+bearishDiv = not na(rsiPivotHigh) and high[5] > lastPriceHigh[10] and rsiPivotHigh < lastRsiHigh[10]
+
+// Bullish divergence: Lower price low, higher RSI low
+bullishDiv = not na(rsiPivotLow) and low[5] < lastPriceLow[10] and rsiPivotLow > lastRsiLow[10]
+
+// ==================== SIGNAL GENERATION ====================
+// Buy signal conditions
+buyWaveSignal = hasPattern and isBullish and waveNumber == 2
+buyConfidenceOk = totalConfidence >= minConfidence
+buySignal = buyWaveSignal and buyConfidenceOk and enableBuyAlerts
+
+// Sell signal conditions
+sellWaveSignal = hasPattern and not isBullish and waveNumber == 2
+sellConfidenceOk = totalConfidence >= minConfidence
+sellSignal = sellWaveSignal and sellConfidenceOk and enableSellAlerts
+
+// Divergence signals
+bullDivSignal = bullishDiv and enableDivergenceAlerts
+bearDivSignal = bearishDiv and enableDivergenceAlerts
+
+// ==================== PLOTTING ====================
+// EMAs
+plot(showEMAs ? emaFastLine : na, "EMA Fast", color=color.yellow, linewidth=1)
+plot(showEMAs ? emaSlowLine : na, "EMA Slow", color=color.orange, linewidth=1)
+plot(showEMAs ? ema200Line : na, "EMA 200", color=color.purple, linewidth=2)
+
+// Signal markers
+plotshape(showSignals and buySignal, "Buy Signal", shape.triangleup, location.belowbar, bullColor, size=size.normal)
+plotshape(showSignals and sellSignal, "Sell Signal", shape.triangledown, location.abovebar, bearColor, size=size.normal)
+
+// Divergence markers
+plotshape(showSignals and bullDivSignal, "Bullish Divergence", shape.diamond, location.belowbar, color.yellow, size=size.small)
+plotshape(showSignals and bearDivSignal, "Bearish Divergence", shape.diamond, location.abovebar, color.yellow, size=size.small)
+
+// Confidence labels
+if showConfidence and (buySignal or sellSignal)
+    labelColor = buySignal ? bullColor : bearColor
+    labelY = buySignal ? low - atr : high + atr
+    labelStyle = buySignal ? label.style_label_up : label.style_label_down
+    label.new(bar_index, labelY, "Conf: " + str.tostring(totalConfidence, "#") + "%\nW" + str.tostring(waveNumber),
+             style=labelStyle, color=labelColor, textcolor=color.white, size=size.small)
+
+// Background for high confidence setups
+bgcolor(totalConfidence >= 80 and hasPattern ? color.new(isBullish ? bullColor : bearColor, 95) : na)
+
+// ==================== INFO TABLE ====================
+var table alertTable = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 80), border_width=1)
+
+if barstate.islast
+    table.cell(alertTable, 0, 0, "Elliott Wave Alerts", text_color=color.white, text_size=size.small)
+    table.cell(alertTable, 1, 0, "", text_color=color.white)
+
+    table.cell(alertTable, 0, 1, "Wave:", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 1, hasPattern ? str.tostring(waveNumber) : "N/A", text_color=color.white, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 2, "Trend:", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 2, isBullish ? "BULL" : "BEAR", text_color=isBullish ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 3, "Confidence:", text_color=color.gray, text_size=size.tiny)
+    confColor = totalConfidence >= 80 ? bullColor : totalConfidence >= 60 ? color.yellow : bearColor
+    table.cell(alertTable, 1, 3, str.tostring(totalConfidence, "#") + "%", text_color=confColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 4, "RSI:", text_color=color.gray, text_size=size.tiny)
+    rsiColor = rsi > rsiOB ? bearColor : rsi < rsiOS ? bullColor : neutralColor
+    table.cell(alertTable, 1, 4, str.tostring(rsi, "#.#"), text_color=rsiColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 5, "MACD:", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 5, macdLine > signalLine ? "BULL" : "BEAR", text_color=macdLine > signalLine ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 6, "EWO:", text_color=color.gray, text_size=size.tiny)
+    table.cell(alertTable, 1, 6, ewo > 0 ? "BULL" : "BEAR", text_color=ewo > 0 ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 7, "Price/EMA:", text_color=color.gray, text_size=size.tiny)
+    emaStatus = close > ema200Line ? "Above 200" : "Below 200"
+    table.cell(alertTable, 1, 7, emaStatus, text_color=close > ema200Line ? bullColor : bearColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 8, "Signal:", text_color=color.gray, text_size=size.tiny)
+    sigText = buySignal ? "BUY" : sellSignal ? "SELL" : "WAIT"
+    sigColor = buySignal ? bullColor : sellSignal ? bearColor : neutralColor
+    table.cell(alertTable, 1, 8, sigText, text_color=sigColor, text_size=size.tiny)
+
+    table.cell(alertTable, 0, 9, "Divergence:", text_color=color.gray, text_size=size.tiny)
+    divText = bullDivSignal ? "BULLISH" : bearDivSignal ? "BEARISH" : "None"
+    divColor = bullDivSignal ? bullColor : bearDivSignal ? bearColor : neutralColor
+    table.cell(alertTable, 1, 9, divText, text_color=divColor, text_size=size.tiny)
+
+// ==================== ALERTS ====================
+// Main trading alerts
+alertcondition(buySignal, title="Buy Signal", message="Elliott Wave BUY Signal\nWave: {{waveNumber}}\nConfidence: {{totalConfidence}}%\nSymbol: {{ticker}}\nPrice: {{close}}")
+
+alertcondition(sellSignal, title="Sell Signal", message="Elliott Wave SELL Signal\nWave: {{waveNumber}}\nConfidence: {{totalConfidence}}%\nSymbol: {{ticker}}\nPrice: {{close}}")
+
+// High confidence alerts
+highConfBuy = buySignal and totalConfidence >= 80
+highConfSell = sellSignal and totalConfidence >= 80
+alertcondition(highConfBuy, title="High Confidence Buy", message="HIGH CONFIDENCE BUY\nConfidence: {{totalConfidence}}%\nSymbol: {{ticker}}\nPrice: {{close}}")
+alertcondition(highConfSell, title="High Confidence Sell", message="HIGH CONFIDENCE SELL\nConfidence: {{totalConfidence}}%\nSymbol: {{ticker}}\nPrice: {{close}}")
+
+// Divergence alerts
+alertcondition(bullDivSignal, title="Bullish Divergence", message="RSI BULLISH DIVERGENCE detected\nPotential Wave 5 ending\nSymbol: {{ticker}}")
+alertcondition(bearDivSignal, title="Bearish Divergence", message="RSI BEARISH DIVERGENCE detected\nPotential Wave 5 ending\nSymbol: {{ticker}}")
+
+// Combined any signal alert
+anySignal = buySignal or sellSignal or bullDivSignal or bearDivSignal
+alertcondition(anySignal, title="Any Signal", message="Elliott Wave signal detected on {{ticker}}")
